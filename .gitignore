@@ -132,3 +132,6 @@ cython_debug/
 
 # VS Code
 .vscode/
+
+# Ignoring dataset
+/data/
