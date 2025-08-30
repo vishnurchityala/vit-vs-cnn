@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-
+from torch import amp
 
 class PyTorchTrainer:
     def __init__(self, model, 
@@ -33,7 +33,7 @@ class PyTorchTrainer:
 
         # Mixed precision
         self.mixed_precision = mixed_precision
-        self.scaler = torch.cuda.amp.GradScaler(enabled=mixed_precision)
+        self.scaler = amp.GradScaler("cuda", enabled=(mixed_precision and self.device == "cuda"))
 
     def train_one_epoch(self):
         self.model.train()
@@ -44,7 +44,7 @@ class PyTorchTrainer:
 
             self.optimizer.zero_grad()
 
-            with torch.cuda.amp.autocast(dtype=torch.float16, enabled=self.mixed_precision):
+            with amp.autocast("cuda", dtype=torch.float16, enabled=self.mixed_precision and self.device == "cuda"):
                 outputs = self.model(images)
                 loss = self.criterion(outputs, labels)
 
@@ -73,7 +73,7 @@ class PyTorchTrainer:
             for images, labels in self.val_loader:
                 images, labels = images.to(self.device), labels.to(self.device)
 
-                with torch.cuda.amp.autocast(dtype=torch.float16, enabled=self.mixed_precision):
+                with amp.autocast("cuda", dtype=torch.float16, enabled=self.mixed_precision and self.device == "cuda"):
                     outputs = self.model(images)
                     loss = self.criterion(outputs, labels)
 
