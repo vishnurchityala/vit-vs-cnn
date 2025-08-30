@@ -97,7 +97,7 @@ class PreTrainedViTClassifier(nn.Module):
     def __init__(self, num_classes, model_name="vit_b_16", img_size=224, device=None):
         super(PreTrainedViTClassifier, self).__init__()
         self.backbone = PreTrainedViTFeatureExtractor(
-            model_name=model_name, img_size=img_size, freeze=False, device=device
+            model_name=model_name, img_size=img_size, freeze=True, device=device
         )
         hidden_dim = self.backbone.model.hidden_dim
         self.classifier = nn.Linear(hidden_dim, num_classes)
