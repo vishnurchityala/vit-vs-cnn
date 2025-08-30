@@ -16,18 +16,6 @@ class PyTorchTrainer:
                  weight_decay=0.05):
         """
         Generic training loop wrapper for PyTorch models with default values.
-        
-        Args:
-            model (nn.Module): The PyTorch model to train.
-            train_loader (DataLoader): Training dataloader (default: None).
-            val_loader (DataLoader): Validation dataloader (optional, default: None).
-            criterion (loss): Loss function (default: CrossEntropyLoss).
-            optimizer (torch.optim): Optimizer (default: Adam).
-            scheduler: LR scheduler (optional, default: None).
-            device (str): 'cuda' or 'cpu' (auto-detect if None).
-            mixed_precision (bool): Use AMP for faster training on GPUs (default: False).
-            lr (float): Learning rate for default optimizer (default: 3e-4).
-            weight_decay (float): Weight decay for default optimizer (default: 0.05).
         """
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device)
@@ -45,7 +33,7 @@ class PyTorchTrainer:
 
         # Mixed precision
         self.mixed_precision = mixed_precision
-        self.scaler = torch.cuda.amp.GradScaler(device='cuda',enabled=mixed_precision)
+        self.scaler = torch.cuda.amp.GradScaler(enabled=mixed_precision)
 
     def train_one_epoch(self):
         self.model.train()
@@ -56,7 +44,7 @@ class PyTorchTrainer:
 
             self.optimizer.zero_grad()
 
-            with torch.cuda.amp.autocast(device='cuda',enabled=self.mixed_precision):
+            with torch.cuda.amp.autocast(dtype=torch.float16, enabled=self.mixed_precision):
                 outputs = self.model(images)
                 loss = self.criterion(outputs, labels)
 
@@ -85,7 +73,7 @@ class PyTorchTrainer:
             for images, labels in self.val_loader:
                 images, labels = images.to(self.device), labels.to(self.device)
 
-                with torch.cuda.amp.autocast(device='cuda',enabled=self.mixed_precision):
+                with torch.cuda.amp.autocast(dtype=torch.float16, enabled=self.mixed_precision):
                     outputs = self.model(images)
                     loss = self.criterion(outputs, labels)
 
