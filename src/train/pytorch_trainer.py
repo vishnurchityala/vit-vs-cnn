@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.cuda import amp
+from torch import amp  # Fixed import - use torch.amp instead of torch.cuda.amp
 from tqdm import tqdm
 
 
@@ -20,39 +20,85 @@ class PyTorchTrainer:
         Generic training loop wrapper for PyTorch models with verbosity,
         automatic device detection, and mixed precision support.
         """
-        # Device detection
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        # Smart device detection with MPS support
+        self.device = self._detect_device(device)
         self.model = model.to(self.device)
 
-        # Set autocast device_type
-        self.device_type = "cuda" if self.device.startswith("cuda") else "cpu"
-
-        # Verbosity
-        print("=" * 60)
-        if self.device_type == "cuda":
-            print(f"[INFO] Using GPU: {torch.cuda.get_device_name(0)}")
+        # Set device_type for autocast - critical for proper AMP functionality
+        if self.device.startswith("cuda"):
+            self.device_type = "cuda"
+        elif self.device == "mps":
+            self.device_type = "cpu"  # MPS uses cpu device_type for autocast
         else:
-            print("[INFO] Using CPU (CUDA not available)")
+            self.device_type = "cpu"
+
+        # Verbosity with better device info
+        print("=" * 60)
+        if self.device == "cuda":
+            print(f"[INFO] Using GPU: {torch.cuda.get_device_name(0)}")
+            print(f"[INFO] GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+        elif self.device == "mps":
+            print("[INFO] Using Apple Silicon GPU (MPS)")
+        else:
+            print("[INFO] Using CPU")
         print("=" * 60)
 
-        # Data
+        # Data loaders
         self.train_loader = train_loader
         self.val_loader = val_loader
 
-        # Training components
+        # Training components with better defaults
         self.criterion = criterion or nn.CrossEntropyLoss()
         self.optimizer = optimizer or optim.Adam(
             self.model.parameters(), lr=lr, weight_decay=weight_decay
         )
         self.scheduler = scheduler
 
-        # Mixed precision
-        self.mixed_precision = mixed_precision and self.device_type == "cuda"
-        self.scaler = amp.GradScaler(enabled=self.mixed_precision)
+        # Mixed precision setup with device-specific handling
+        self.mixed_precision = self._setup_mixed_precision(mixed_precision)
+        
+        # Initialize scaler with proper device_type
+        if self.device == "cuda" and self.mixed_precision:
+            self.scaler = amp.GradScaler("cuda", enabled=True)
+            self.autocast_dtype = torch.float16
+        else:
+            self.scaler = amp.GradScaler("cpu", enabled=False)
+            self.autocast_dtype = torch.float32
+            
+        # Print mixed precision status
         if self.mixed_precision:
             print("[INFO] Mixed precision training enabled.")
         else:
             print("[INFO] Mixed precision training disabled.")
+            if self.device == "mps":
+                print("[INFO] Mixed precision not supported on MPS, using float32.")
+
+    def _detect_device(self, device=None):
+        """Smart device detection with priority: CUDA > MPS > CPU"""
+        if device is not None:
+            return device
+            
+        if torch.cuda.is_available():
+            return "cuda"
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            return "mps"
+        else:
+            return "cpu"
+
+    def _setup_mixed_precision(self, mixed_precision):
+        """Setup mixed precision based on device capabilities"""
+        if not mixed_precision:
+            return False
+            
+        if self.device == "cuda":
+            return True
+        elif self.device == "mps":
+            # MPS has issues with mixed precision, disable it
+            print("[WARNING] Mixed precision disabled on MPS due to compatibility issues.")
+            return False
+        else:
+            # CPU mixed precision is generally not beneficial
+            return False
 
     def train_one_epoch(self, epoch):
         self.model.train()
@@ -60,28 +106,44 @@ class PyTorchTrainer:
 
         pbar = tqdm(self.train_loader, desc=f"Epoch {epoch} [Train]", leave=False)
         for images, labels in pbar:
-            images, labels = images.to(self.device), labels.to(self.device)
+            # Non-blocking transfer for better performance
+            images = images.to(self.device, non_blocking=True)
+            labels = labels.to(self.device, non_blocking=True)
 
-            self.optimizer.zero_grad()
+            # More efficient gradient zeroing
+            self.optimizer.zero_grad(set_to_none=True)
 
-            with amp.autocast(device_type=self.device_type, dtype=torch.float16, enabled=self.mixed_precision):
+            # Fixed autocast with proper device_type and dtype handling
+            with amp.autocast(
+                device_type=self.device_type, 
+                dtype=self.autocast_dtype, 
+                enabled=self.mixed_precision
+            ):
                 outputs = self.model(images)
                 loss = self.criterion(outputs, labels)
 
-            self.scaler.scale(loss).backward()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            # Proper backward pass handling for different devices
+            if self.mixed_precision and self.device == "cuda":
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                loss.backward()
+                self.optimizer.step()
 
+            # Step scheduler if it's step-based
             if self.scheduler:
                 self.scheduler.step()
 
-            # Metrics
+            # Metrics calculation
             total_loss += loss.item() * images.size(0)
             _, preds = outputs.max(1)
             total_correct += preds.eq(labels).sum().item()
             total_samples += labels.size(0)
 
-            pbar.set_postfix(loss=loss.item(), acc=total_correct / total_samples)
+            # Update progress bar
+            current_acc = total_correct / total_samples
+            pbar.set_postfix(loss=f"{loss.item():.4f}", acc=f"{current_acc:.4f}")
 
         return total_loss / total_samples, total_correct / total_samples
 
@@ -92,12 +154,19 @@ class PyTorchTrainer:
         self.model.eval()
         total_loss, total_correct, total_samples = 0, 0, 0
 
-        with torch.no_grad():
+        # Use torch.inference_mode() for better performance than torch.no_grad()
+        with torch.inference_mode():
             pbar = tqdm(self.val_loader, desc=f"Epoch {epoch} [Val]", leave=False)
             for images, labels in pbar:
-                images, labels = images.to(self.device), labels.to(self.device)
+                images = images.to(self.device, non_blocking=True)
+                labels = labels.to(self.device, non_blocking=True)
 
-                with amp.autocast(device_type=self.device_type, dtype=torch.float16, enabled=self.mixed_precision):
+                # Fixed autocast for validation
+                with amp.autocast(
+                    device_type=self.device_type, 
+                    dtype=self.autocast_dtype, 
+                    enabled=self.mixed_precision
+                ):
                     outputs = self.model(images)
                     loss = self.criterion(outputs, labels)
 
@@ -106,7 +175,9 @@ class PyTorchTrainer:
                 total_correct += preds.eq(labels).sum().item()
                 total_samples += labels.size(0)
 
-                pbar.set_postfix(loss=loss.item(), acc=total_correct / total_samples)
+                # Update progress bar
+                current_acc = total_correct / total_samples
+                pbar.set_postfix(loss=f"{loss.item():.4f}", acc=f"{current_acc:.4f}")
 
         return total_loss / total_samples, total_correct / total_samples
 
@@ -116,22 +187,62 @@ class PyTorchTrainer:
 
         history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
 
+        print(f"\n Starting training for {epochs} epochs...")
+        print("=" * 70)
+
         for epoch in range(1, epochs + 1):
             train_loss, train_acc = self.train_one_epoch(epoch)
             val_loss, val_acc = self.validate(epoch)
 
+            # Store history
             history["train_loss"].append(train_loss)
             history["train_acc"].append(train_acc)
             if val_loss is not None:
                 history["val_loss"].append(val_loss)
                 history["val_acc"].append(val_acc)
 
+            # Print epoch results
             if val_loss is not None:
-                print(f"Epoch [{epoch}/{epochs}] "
+                print(f"Epoch [{epoch:3d}/{epochs}] "
                       f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} "
                       f"| Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}")
             else:
-                print(f"Epoch [{epoch}/{epochs}] "
+                print(f"Epoch [{epoch:3d}/{epochs}] "
                       f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f}")
 
+        print("=" * 70)
+        print(" Training completed!")
         return history
+
+    def save_model(self, path, epoch=None, **kwargs):
+        """Save model checkpoint"""
+        checkpoint = {
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'device': self.device,
+            'mixed_precision': self.mixed_precision,
+            **kwargs
+        }
+        
+        if epoch is not None:
+            checkpoint['epoch'] = epoch
+            
+        if self.scheduler:
+            checkpoint['scheduler_state_dict'] = self.scheduler.state_dict()
+            
+        torch.save(checkpoint, path)
+        print(f" Model saved to {path}")
+
+    def load_model(self, path):
+        """Load model checkpoint"""
+        checkpoint = torch.load(path, map_location=self.device)
+        
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        
+        if self.scheduler and 'scheduler_state_dict' in checkpoint:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            
+        epoch = checkpoint.get('epoch', 0)
+        print(f"📁 Model loaded from {path} (epoch {epoch})")
+        return epoch
