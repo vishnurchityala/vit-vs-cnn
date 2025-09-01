@@ -187,7 +187,7 @@ class PyTorchTrainer:
 
         history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
 
-        print(f"\n Starting training for {epochs} epochs...")
+        print(f"\n🚀 Starting training for {epochs} epochs...")
         print("=" * 70)
 
         for epoch in range(1, epochs + 1):
@@ -211,7 +211,7 @@ class PyTorchTrainer:
                       f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f}")
 
         print("=" * 70)
-        print(" Training completed!")
+        print("🎉 Training completed!")
         return history
 
     def save_model(self, path, epoch=None, **kwargs):
@@ -231,7 +231,7 @@ class PyTorchTrainer:
             checkpoint['scheduler_state_dict'] = self.scheduler.state_dict()
             
         torch.save(checkpoint, path)
-        print(f" Model saved to {path}")
+        print(f"💾 Model saved to {path}")
 
     def load_model(self, path):
         """Load model checkpoint"""
@@ -246,3 +246,119 @@ class PyTorchTrainer:
         epoch = checkpoint.get('epoch', 0)
         print(f"📁 Model loaded from {path} (epoch {epoch})")
         return epoch
+
+    def evaluate(self, test_loader, verbose=True):
+        """
+        Evaluate the model on a test dataset
+        
+        Args:
+            test_loader: DataLoader for test data
+            verbose: Whether to show progress bar and print results
+            
+        Returns:
+            tuple: (test_loss, test_accuracy)
+        """
+        if test_loader is None:
+            raise ValueError("test_loader must be provided for evaluation.")
+            
+        self.model.eval()
+        total_loss, total_correct, total_samples = 0, 0, 0
+
+        with torch.inference_mode():
+            if verbose:
+                pbar = tqdm(test_loader, desc="Evaluating", leave=True)
+                iterator = pbar
+            else:
+                iterator = test_loader
+                
+            for images, labels in iterator:
+                images = images.to(self.device, non_blocking=True)
+                labels = labels.to(self.device, non_blocking=True)
+
+                # Use autocast for consistency with training
+                with amp.autocast(
+                    device_type=self.device_type, 
+                    dtype=self.autocast_dtype, 
+                    enabled=self.mixed_precision
+                ):
+                    outputs = self.model(images)
+                    loss = self.criterion(outputs, labels)
+
+                total_loss += loss.item() * images.size(0)
+                _, preds = outputs.max(1)
+                total_correct += preds.eq(labels).sum().item()
+                total_samples += labels.size(0)
+
+                if verbose:
+                    current_acc = total_correct / total_samples
+                    pbar.set_postfix(loss=f"{loss.item():.4f}", acc=f"{current_acc:.4f}")
+
+        test_loss = total_loss / total_samples
+        test_acc = total_correct / total_samples
+        
+        if verbose:
+            print("=" * 50)
+            print(f"📊 Test Results:")
+            print(f"   Test Loss: {test_loss:.4f}")
+            print(f"   Test Accuracy: {test_acc:.4f} ({test_acc*100:.2f}%)")
+            print(f"   Correct Predictions: {total_correct}/{total_samples}")
+            print("=" * 50)
+
+        return test_loss, test_acc
+
+    def predict(self, data_loader, return_probabilities=False):
+        """
+        Make predictions on a dataset
+        
+        Args:
+            data_loader: DataLoader for prediction data
+            return_probabilities: If True, return softmax probabilities instead of class predictions
+            
+        Returns:
+            numpy.ndarray: Predictions or probabilities
+        """
+        self.model.eval()
+        all_predictions = []
+        
+        with torch.inference_mode():
+            pbar = tqdm(data_loader, desc="Predicting", leave=True)
+            for images, _ in pbar:
+                images = images.to(self.device, non_blocking=True)
+                
+                with amp.autocast(
+                    device_type=self.device_type, 
+                    dtype=self.autocast_dtype, 
+                    enabled=self.mixed_precision
+                ):
+                    outputs = self.model(images)
+                
+                if return_probabilities:
+                    # Return softmax probabilities
+                    probs = torch.softmax(outputs, dim=1)
+                    all_predictions.extend(probs.cpu().numpy())
+                else:
+                    # Return class predictions
+                    _, preds = outputs.max(1)
+                    all_predictions.extend(preds.cpu().numpy())
+        
+        import numpy as np
+        return np.array(all_predictions)
+
+    def get_model_info(self):
+        """Print detailed model information"""
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        
+        print("=" * 60)
+        print("🔍 Model Information:")
+        print(f"   Total Parameters: {total_params:,}")
+        print(f"   Trainable Parameters: {trainable_params:,}")
+        print(f"   Non-trainable Parameters: {total_params - trainable_params:,}")
+        print(f"   Device: {self.device}")
+        print(f"   Mixed Precision: {self.mixed_precision}")
+        print(f"   Model Type: {type(self.model).__name__}")
+        
+        # Calculate model size in MB
+        model_size = sum(p.numel() * p.element_size() for p in self.model.parameters()) / (1024 * 1024)
+        print(f"   Model Size: {model_size:.2f} MB")
+        print("=" * 60)
