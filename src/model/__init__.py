@@ -1,8 +1,5 @@
-from .vision_transformer import CustomViTClassifier, PreTrainedViTClassifier, PreTrainedViTFeatureExtractor, CustomViTFeatureExtractor
+from .vision_transformer import CustomViTClassifier
 
 __all__ = [
-    "CustomViTClassifier",
-    "PreTrainedViTClassifier",
-    "PreTrainedViTFeatureExtractor",
-    "CustomViTFeatureExtractor"
+    "CustomViTClassifier"
 ]
