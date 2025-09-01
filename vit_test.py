@@ -1,5 +1,5 @@
 import torch
-from src.model import CustomViTClassifier
+from src.model import CustomViTClassifier, ResNetMLP
 from src.train import PyTorchTrainer
 from src.data_loaders import get_dataloaders
 
@@ -18,6 +18,9 @@ if __name__ == "__main__":
     pretrained_cls = CustomViTClassifier(
         num_classes=num_classes, model_name="vit_b_16", img_size=224, device=device
     )
+    cnn_cls = ResNetMLP(
+        num_classes=num_classes
+)
 
     # Trainer
     print("Loading the trainer......")
@@ -31,9 +34,13 @@ if __name__ == "__main__":
 
     print("Training the model......")
     # Train for a few epochs
-    history = trainer.fit(epochs=5)
+    history = trainer.fit(epochs=1)
 
     print("Evaluating the model.....")
     # (Optional) Evaluate on test set
     test_loss, test_acc = trainer.evaluate(test_loader)
     print(f"Final Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f}")
+
+    print("Saving the model...")
+    torch.save(pretrained_cls.state_dict(), "model.pth")
+
