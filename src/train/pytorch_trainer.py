@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch import amp
+from torch.cuda import amp
 from tqdm import tqdm
 
 
@@ -24,9 +24,12 @@ class PyTorchTrainer:
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device)
 
+        # Set autocast device_type
+        self.device_type = "cuda" if self.device.startswith("cuda") else "cpu"
+
         # Verbosity
         print("=" * 60)
-        if self.device == "cuda":
+        if self.device_type == "cuda":
             print(f"[INFO] Using GPU: {torch.cuda.get_device_name(0)}")
         else:
             print("[INFO] Using CPU (CUDA not available)")
@@ -44,7 +47,7 @@ class PyTorchTrainer:
         self.scheduler = scheduler
 
         # Mixed precision
-        self.mixed_precision = mixed_precision and self.device == "cuda"
+        self.mixed_precision = mixed_precision and self.device_type == "cuda"
         self.scaler = amp.GradScaler(enabled=self.mixed_precision)
         if self.mixed_precision:
             print("[INFO] Mixed precision training enabled.")
@@ -61,7 +64,7 @@ class PyTorchTrainer:
 
             self.optimizer.zero_grad()
 
-            with amp.autocast(device_type=self.device, dtype=torch.float16, enabled=self.mixed_precision):
+            with amp.autocast(device_type=self.device_type, dtype=torch.float16, enabled=self.mixed_precision):
                 outputs = self.model(images)
                 loss = self.criterion(outputs, labels)
 
@@ -94,7 +97,7 @@ class PyTorchTrainer:
             for images, labels in pbar:
                 images, labels = images.to(self.device), labels.to(self.device)
 
-                with amp.autocast(enabled=self.mixed_precision):
+                with amp.autocast(device_type=self.device_type, dtype=torch.float16, enabled=self.mixed_precision):
                     outputs = self.model(images)
                     loss = self.criterion(outputs, labels)
 
@@ -123,10 +126,12 @@ class PyTorchTrainer:
                 history["val_loss"].append(val_loss)
                 history["val_acc"].append(val_acc)
 
-            print(f"Epoch [{epoch}/{epochs}] "
-                  f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} "
-                  f"| Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}" if val_loss else
-                  f"Epoch [{epoch}/{epochs}] "
-                  f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f}")
+            if val_loss is not None:
+                print(f"Epoch [{epoch}/{epochs}] "
+                      f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} "
+                      f"| Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}")
+            else:
+                print(f"Epoch [{epoch}/{epochs}] "
+                      f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f}")
 
         return history
