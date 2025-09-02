@@ -1,16 +1,13 @@
 import torch
 from src.model import CustomViTClassifier, ResNetMLP
 from src.train import PyTorchTrainer
-from src.data_loaders import get_dataloaders
+from src.data_loaders import cifar_test_loader, cifar_train_loader, cifar_val_loader
 
 if __name__ == "__main__":
 
     print("Loading the CIFAR Dataset......")
     dataset = "cifar10"  
-    train_loader, val_loader, test_loader, num_classes = get_dataloaders(
-        dataset, batch_size=64, img_size=224, val_split=0.1
-    )
-
+    train_loader, val_loader, test_loader, num_classes = (cifar_train_loader,cifar_val_loader,cifar_test_loader,10)
     print("Loading the CNN Model......")
     cnn_cls = ResNetMLP(
         num_classes=num_classes
