@@ -21,7 +21,7 @@ class ResNetMLP(nn.Module):
     def __init__(self, 
                  num_classes, 
                  pretrained=True, 
-                 mlp_hidden=None, 
+                 mlp_hidden=[1024, 512], 
                  dropout=0.2, 
                  freeze_backbone=False,
                  device=None):
