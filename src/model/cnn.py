@@ -4,97 +4,83 @@ import torchvision.models as models
 from torchvision.models import ResNet50_Weights
 
 
+def get_device():
+    """Determine the appropriate device for computation."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    else:
+        return torch.device("cpu")
+
+
 class ResNetMLP(nn.Module):
-    def __init__(self, num_classes, pretrained=True, mlp_hidden=None, dropout=0.2, freeze_backbone=False, device=None):
+    """
+    ResNet-based classifier with MLP head.
+    Clean implementation with proper device handling.
+    """
+    
+    def __init__(self, 
+                 num_classes, 
+                 pretrained=True, 
+                 mlp_hidden=None, 
+                 dropout=0.2, 
+                 freeze_backbone=False,
+                 device=None):
         super().__init__()
+        
         if mlp_hidden is None:
             mlp_hidden = []
-            
-        # Graceful device detection
-        self.device = self._detect_device(device)
-
-        # Handle weights (new API instead of deprecated pretrained=True)
+        
+        # Device handling
+        self.device = device if device is not None else get_device()
+        
+        # Load ResNet50 backbone
         weights = ResNet50_Weights.DEFAULT if pretrained else None
-        model = models.resnet50(weights=weights)
-
-        # Replace final FC with identity to get backbone features
-        backbone_out = model.fc.in_features
-        modules = list(model.children())[:-1]
+        resnet = models.resnet50(weights=weights)
+        
+        # Extract backbone (remove final classifier)
+        backbone_out = resnet.fc.in_features
+        modules = list(resnet.children())[:-1]
         self.backbone = nn.Sequential(*modules)
-
+        
         # Optionally freeze backbone
         if freeze_backbone:
             for param in self.backbone.parameters():
                 param.requires_grad = False
-
-        # Custom MLP head
+            print(f"[INFO] ResNet backbone frozen")
+        
+        # Build MLP head
         layers = []
         input_dim = backbone_out
-        for h in mlp_hidden:
-            layers += [nn.Linear(input_dim, h), nn.ReLU(inplace=True), nn.Dropout(dropout)]
-            input_dim = h
-        layers.append(nn.Linear(input_dim, num_classes))
-        self.mlp = nn.Sequential(*layers)
         
-        # Move model to device with error handling
-        try:
-            self.backbone = self.backbone.to(self.device)
-            self.mlp = self.mlp.to(self.device)
-            print(f"[INFO] ResNet model loaded on {self.device}")
-        except Exception as e:
-            print(f"[WARNING] Failed to move ResNet to {self.device}: {e}, falling back to CPU")
-            self.device = "cpu"
-            self.backbone = self.backbone.to(self.device)
-            self.mlp = self.mlp.to(self.device)
+        for hidden_dim in mlp_hidden:
+            layers.extend([
+                nn.Linear(input_dim, hidden_dim),
+                nn.ReLU(inplace=True),
+                nn.Dropout(dropout)
+            ])
+            input_dim = hidden_dim
+        
+        # Final classification layer
+        layers.append(nn.Linear(input_dim, num_classes))
+        self.classifier = nn.Sequential(*layers)
+        
+        # Move to device
+        self.to(self.device)
+        print(f"[INFO] ResNet model loaded on {self.device}")
     
-    def _detect_device(self, device=None):
-        """Gracefully detect device for ResNet"""
-        if device is not None:
-            if device.startswith("cuda"):
-                if not torch.cuda.is_available():
-                    print(f"[WARNING] CUDA requested but not available for ResNet, using CPU")
-                    return "cpu"
-                try:
-                    # Test CUDA functionality
-                    test_tensor = torch.tensor([1.0]).to(device)
-                    return device
-                except Exception as e:
-                    print(f"[WARNING] CUDA device {device} not accessible for ResNet: {e}, using CPU")
-                    return "cpu"
-            return device
-            
-        # Auto-detect: prefer CUDA if available and working
-        if torch.cuda.is_available():
-            try:
-                # Test CUDA functionality
-                test_tensor = torch.tensor([1.0]).cuda()
-                return "cuda"
-            except Exception as e:
-                print(f"[WARNING] CUDA available but not functional for ResNet: {e}, using CPU")
-                return "cpu"
-        else:
-            return "cpu"
-
     def forward(self, x):
-        # Safe device handling in forward pass
-        try:
-            x = x.to(self.device)
-            x = self.backbone(x)
-            x = torch.flatten(x, 1)
-            x = self.mlp(x)
-            return x
-        except Exception as e:
-            print(f"[ERROR] ResNet forward pass failed: {e}")
-            # Try CPU fallback if not already on CPU
-            if self.device != "cpu":
-                print("[INFO] Attempting CPU fallback for ResNet forward pass")
-                x = x.to("cpu")
-                self.backbone = self.backbone.to("cpu")
-                self.mlp = self.mlp.to("cpu")
-                self.device = "cpu"
-                x = self.backbone(x)
-                x = torch.flatten(x, 1)
-                x = self.mlp(x)
-                return x
-            else:
-                raise e
+        """Forward pass."""
+        # Ensure input is on correct device
+        x = x.to(self.device)
+        
+        # Extract features
+        x = self.backbone(x)
+        x = torch.flatten(x, 1)
+        
+        # Classify
+        x = self.classifier(x)
+        return x
+    
+    def get_device(self):
+        """Get the device of the model."""
+        return self.device

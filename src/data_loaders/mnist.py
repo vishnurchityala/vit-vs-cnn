@@ -1,52 +1,35 @@
+import torch
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader, random_split
-import multiprocessing
-import os
 
-# Transforms
+# Simple transforms for MNIST
 transform = transforms.Compose([
     transforms.Resize(224),
     transforms.ToTensor(),
     transforms.Normalize((0.1307,), (0.3081,)),
 ])
 
+# Simple configuration
 batch_size = 64
 val_split = 0.1
 mnist_num_classes = 10
 
-# Platform-aware worker configuration
-def get_num_workers():
-    """Get optimal number of workers based on platform and available CPUs"""
-    try:
-        max_workers = min(multiprocessing.cpu_count(), 8)
-        if os.name == 'posix' and 'darwin' in os.uname().sysname.lower():
-            return min(2, max_workers)  # Mac development
-        else:
-            return max_workers  # Server/Windows
-    except Exception:
-        return 2
-
-num_workers = get_num_workers()
-
+# Load datasets
 full_train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
 test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
 
+# Split train into train/val
 val_size = int(len(full_train_dataset) * val_split)
 train_size = len(full_train_dataset) - val_size
 train_dataset, val_dataset = random_split(full_train_dataset, [train_size, val_size])
 
-# Platform-aware DataLoaders
-try:
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, 
-                             num_workers=num_workers, pin_memory=True, persistent_workers=True)
-    val_loader   = DataLoader(val_dataset,   batch_size=batch_size, shuffle=False, 
-                             num_workers=num_workers, pin_memory=True, persistent_workers=True)
-    test_loader  = DataLoader(test_dataset,  batch_size=batch_size, shuffle=False, 
-                             num_workers=num_workers, pin_memory=True, persistent_workers=True)
-except Exception as e:
-    print(f"[WARNING] Failed to create MNIST DataLoaders with {num_workers} workers: {e}")
-    print("[INFO] Falling back to single-threaded DataLoaders")
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-    val_loader   = DataLoader(val_dataset,   batch_size=batch_size, shuffle=False, num_workers=0)
-    test_loader  = DataLoader(test_dataset,  batch_size=batch_size, shuffle=False, num_workers=0)
+# Simple DataLoaders
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+# Export for easy import
+mnist_train_loader = train_loader
+mnist_val_loader = val_loader
+mnist_test_loader = test_loader
