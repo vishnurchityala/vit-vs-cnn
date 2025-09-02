@@ -32,21 +32,9 @@ if __name__ == "__main__":
         model=vit_cls,
         train_loader=train_loader,
         val_loader=val_loader,
-        mixed_precision=True,
+        mixed_precision=False,  # Disable mixed precision for ViT to avoid dtype conflicts
+        device="cpu",  # Force CPU for ViT to avoid MPS compatibility issues
     )
-
-
-    print("Training the CNN Model......")
-    # Train for a few epochs
-    history = cnn_trainer.fit(epochs=1)
-
-    print("Evaluating the CNN Model.....")
-    # (Optional) Evaluate on test set
-    test_loss, test_acc = cnn_trainer.evaluate(test_loader)
-    print(f"Final Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f}")
-
-    print("Saving the CNN Model...")
-    torch.save(cnn_cls.state_dict(), "cnn_model.pth")
 
     print("Training the ViT Model......")
     # Train for a few epochs
@@ -59,4 +47,16 @@ if __name__ == "__main__":
 
     print("Saving the ViT Model...")
     torch.save(vit_cls.state_dict(), "vit_model.pth")
+
+    print("Training the CNN Model......")
+    # Train for a few epochs
+    history = cnn_trainer.fit(epochs=1)
+
+    print("Evaluating the CNN Model.....")
+    # (Optional) Evaluate on test set
+    test_loss, test_acc = cnn_trainer.evaluate(test_loader)
+    print(f"Final Test Loss: {test_loss:.4f}, Test Acc: {test_acc:.4f}")
+
+    print("Saving the CNN Model...")
+    torch.save(cnn_cls.state_dict(), "cnn_model.pth")
 

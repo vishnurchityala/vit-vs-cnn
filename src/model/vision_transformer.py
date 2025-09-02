@@ -44,7 +44,14 @@ class CustomViTClassifier(nn.Module):
         device=None
     ):
         super().__init__()
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        # Force CPU for Vision Transformer to avoid MPS dtype issues
+        if device is None:
+            if torch.cuda.is_available():
+                self.device = "cuda"
+            else:
+                self.device = "cpu"  # Use CPU instead of MPS for ViT compatibility
+        else:
+            self.device = device
         self.model_name = model_name
         self.img_size = img_size
 
@@ -81,9 +88,13 @@ class CustomViTClassifier(nn.Module):
 
         # Custom classifier
         self.classifier = nn.Linear(hidden_dim, num_classes)
-        self.model = self.model.to(self.device)
+        
+        # Ensure model is on correct device and dtype
+        self.model = self.model.to(self.device, dtype=torch.float32)
+        self.classifier = self.classifier.to(self.device, dtype=torch.float32)
 
     def forward(self, x):
-        x = x.to(self.device)
+        # Ensure consistent dtype and device
+        x = x.to(self.device, dtype=torch.float32)
         features = self.model(x)
         return self.classifier(features)

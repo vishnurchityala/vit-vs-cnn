@@ -333,11 +333,9 @@ class PyTorchTrainer:
                     outputs = self.model(images)
                 
                 if return_probabilities:
-                    # Return softmax probabilities
                     probs = torch.softmax(outputs, dim=1)
                     all_predictions.extend(probs.cpu().numpy())
                 else:
-                    # Return class predictions
                     _, preds = outputs.max(1)
                     all_predictions.extend(preds.cpu().numpy())
         
