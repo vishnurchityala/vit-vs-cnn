@@ -9,30 +9,29 @@ if __name__ == "__main__":
     train_loader, val_loader, test_loader, num_classes = (dtd_train_loader,dtd_val_loader,dtd_test_loader,dtd_num_classes)
     print("Loading the CNN Model......")
     cnn_cls = ResNetMLP(
-        num_classes=num_classes
+        num_classes=num_classes  # Let the model auto-detect device
     )
     # Model
     print("Loading the ViT Model......")
     vit_cls = CustomViTClassifier(
-        num_classes=num_classes, model_name="vit_b_16", img_size=224
+        num_classes=num_classes, model_name="vit_b_16", img_size=224  # Let the model auto-detect device
     )
 
 
-    # Trainer
+    # Trainer with graceful device handling
     print("Loading the CNN Trainer......")
     cnn_trainer = PyTorchTrainer(
         model=cnn_cls,
         train_loader=train_loader,
         val_loader=val_loader,
-        mixed_precision=True,
+        mixed_precision=True,  # Will be auto-disabled if not supported
     )
     print("Loading the ViT Trainer......")
     vit_trainer = PyTorchTrainer(
         model=vit_cls,
         train_loader=train_loader,
         val_loader=val_loader,
-        mixed_precision=False,  # Disable mixed precision for ViT to avoid dtype conflicts
-        device="cpu",  # Force CPU for ViT to avoid MPS compatibility issues
+        mixed_precision=True,  # Will be auto-disabled if not supported
     )
 
     print("Training the ViT Model......")

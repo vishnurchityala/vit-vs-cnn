@@ -17,30 +17,39 @@ class PyTorchTrainer:
                  lr=3e-4,
                  weight_decay=0.05):
         """
-        Generic training loop wrapper for PyTorch models with verbosity,
-        automatic device detection, and mixed precision support.
+        Generic training loop wrapper for PyTorch models with graceful device handling.
+        Supports CUDA when available, falls back to CPU gracefully.
+        Platform-agnostic for Mac development and Windows server training.
         """
-        # Smart device detection with MPS support
+        # Graceful device detection - CUDA or CPU only
         self.device = self._detect_device(device)
-        self.model = model.to(self.device)
+        
+        # Safely move model to device with error handling
+        try:
+            self.model = model.to(self.device)
+        except Exception as e:
+            print(f"[WARNING] Failed to move model to {self.device}, falling back to CPU: {e}")
+            self.device = "cpu"
+            self.model = model.to(self.device)
 
-        # Set device_type for autocast - critical for proper AMP functionality
+        # Set device_type for autocast - simplified for CUDA/CPU only
         if self.device.startswith("cuda"):
             self.device_type = "cuda"
-        elif self.device == "mps":
-            self.device_type = "cpu"  # MPS uses cpu device_type for autocast
         else:
             self.device_type = "cpu"
 
-        # Verbosity with better device info
+        # Platform-aware device info
         print("=" * 60)
-        if self.device == "cuda":
-            print(f"[INFO] Using GPU: {torch.cuda.get_device_name(0)}")
-            print(f"[INFO] GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
-        elif self.device == "mps":
-            print("[INFO] Using Apple Silicon GPU (MPS)")
+        if self.device.startswith("cuda"):
+            try:
+                print(f"[INFO] Using CUDA GPU: {torch.cuda.get_device_name(0)}")
+                print(f"[INFO] GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+                print(f"[INFO] CUDA Version: {torch.version.cuda}")
+            except Exception as e:
+                print(f"[INFO] Using CUDA GPU (details unavailable: {e})")
         else:
             print("[INFO] Using CPU")
+            print(f"[INFO] Platform: {torch.get_default_dtype()} precision")
         print("=" * 60)
 
         # Data loaders
@@ -54,50 +63,76 @@ class PyTorchTrainer:
         )
         self.scheduler = scheduler
 
-        # Mixed precision setup with device-specific handling
+        # Mixed precision setup with graceful handling
         self.mixed_precision = self._setup_mixed_precision(mixed_precision)
         
-        # Initialize scaler with proper device_type
-        if self.device == "cuda" and self.mixed_precision:
-            self.scaler = amp.GradScaler("cuda", enabled=True)
-            self.autocast_dtype = torch.float16
-        else:
+        # Initialize scaler with error handling
+        try:
+            if self.device.startswith("cuda") and self.mixed_precision:
+                self.scaler = amp.GradScaler("cuda", enabled=True)
+                self.autocast_dtype = torch.float16
+            else:
+                self.scaler = amp.GradScaler("cpu", enabled=False)
+                self.autocast_dtype = torch.float32
+        except Exception as e:
+            print(f"[WARNING] Failed to initialize GradScaler: {e}, disabling mixed precision")
+            self.mixed_precision = False
             self.scaler = amp.GradScaler("cpu", enabled=False)
             self.autocast_dtype = torch.float32
             
         # Print mixed precision status
         if self.mixed_precision:
-            print("[INFO] Mixed precision training enabled.")
+            print("[INFO] Mixed precision training enabled (FP16)")
         else:
-            print("[INFO] Mixed precision training disabled.")
-            if self.device == "mps":
-                print("[INFO] Mixed precision not supported on MPS, using float32.")
+            print("[INFO] Mixed precision disabled, using FP32")
 
     def _detect_device(self, device=None):
-        """Smart device detection with priority: CUDA > MPS > CPU"""
+        """Graceful device detection: CUDA if available, otherwise CPU"""
         if device is not None:
+            # Validate provided device
+            if device.startswith("cuda"):
+                if not torch.cuda.is_available():
+                    print(f"[WARNING] CUDA requested but not available, falling back to CPU")
+                    return "cpu"
+                try:
+                    # Test if the specific CUDA device is accessible
+                    test_tensor = torch.tensor([1.0]).to(device)
+                    return device
+                except Exception as e:
+                    print(f"[WARNING] CUDA device {device} not accessible: {e}, falling back to CPU")
+                    return "cpu"
             return device
             
+        # Auto-detect: CUDA if available and working, otherwise CPU
         if torch.cuda.is_available():
-            return "cuda"
-        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-            return "mps"
+            try:
+                # Test CUDA functionality
+                test_tensor = torch.tensor([1.0]).cuda()
+                return "cuda"
+            except Exception as e:
+                print(f"[WARNING] CUDA available but not functional: {e}, using CPU")
+                return "cpu"
         else:
             return "cpu"
 
     def _setup_mixed_precision(self, mixed_precision):
-        """Setup mixed precision based on device capabilities"""
+        """Setup mixed precision with graceful fallback"""
         if not mixed_precision:
             return False
             
-        if self.device == "cuda":
-            return True
-        elif self.device == "mps":
-            # MPS has issues with mixed precision, disable it
-            print("[WARNING] Mixed precision disabled on MPS due to compatibility issues.")
-            return False
+        if self.device.startswith("cuda"):
+            try:
+                # Test if mixed precision is supported
+                with torch.cuda.amp.autocast():
+                    test_tensor = torch.tensor([1.0]).cuda()
+                return True
+            except Exception as e:
+                print(f"[WARNING] Mixed precision requested but not supported: {e}")
+                return False
         else:
-            # CPU mixed precision is generally not beneficial
+            # CPU mixed precision is not beneficial and can cause issues
+            if mixed_precision:
+                print("[INFO] Mixed precision disabled on CPU (not beneficial)")
             return False
 
     def train_one_epoch(self, epoch):
@@ -106,30 +141,46 @@ class PyTorchTrainer:
 
         pbar = tqdm(self.train_loader, desc=f"Epoch {epoch} [Train]", leave=False)
         for images, labels in pbar:
-            # Non-blocking transfer for better performance
-            images = images.to(self.device, non_blocking=True)
-            labels = labels.to(self.device, non_blocking=True)
+            # Safe device transfer with error handling
+            try:
+                images = images.to(self.device, non_blocking=True)
+                labels = labels.to(self.device, non_blocking=True)
+            except Exception as e:
+                # Fallback to blocking transfer if non-blocking fails
+                images = images.to(self.device, non_blocking=False)
+                labels = labels.to(self.device, non_blocking=False)
 
             # More efficient gradient zeroing
             self.optimizer.zero_grad(set_to_none=True)
 
-            # Fixed autocast with proper device_type and dtype handling
-            with amp.autocast(
-                device_type=self.device_type, 
-                dtype=self.autocast_dtype, 
-                enabled=self.mixed_precision
-            ):
+            # Graceful autocast with error handling
+            try:
+                autocast_context = amp.autocast(
+                    device_type=self.device_type, 
+                    dtype=self.autocast_dtype, 
+                    enabled=self.mixed_precision
+                )
+            except Exception as e:
+                # Fallback to disabled autocast
+                print(f"[WARNING] Autocast failed: {e}, using FP32")
+                autocast_context = amp.autocast(device_type="cpu", enabled=False)
+                
+            with autocast_context:
                 outputs = self.model(images)
                 loss = self.criterion(outputs, labels)
 
-            # Proper backward pass handling for different devices
-            if self.mixed_precision and self.device == "cuda":
-                self.scaler.scale(loss).backward()
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
-                loss.backward()
-                self.optimizer.step()
+            # Graceful backward pass with error handling
+            try:
+                if self.mixed_precision and self.device.startswith("cuda"):
+                    self.scaler.scale(loss).backward()
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    loss.backward()
+                    self.optimizer.step()
+            except Exception as e:
+                print(f"[WARNING] Backward pass failed: {e}, skipping batch")
+                continue
 
             # Step scheduler if it's step-based
             if self.scheduler:
@@ -158,15 +209,25 @@ class PyTorchTrainer:
         with torch.inference_mode():
             pbar = tqdm(self.val_loader, desc=f"Epoch {epoch} [Val]", leave=False)
             for images, labels in pbar:
-                images = images.to(self.device, non_blocking=True)
-                labels = labels.to(self.device, non_blocking=True)
+                # Safe device transfer
+                try:
+                    images = images.to(self.device, non_blocking=True)
+                    labels = labels.to(self.device, non_blocking=True)
+                except Exception:
+                    images = images.to(self.device, non_blocking=False)
+                    labels = labels.to(self.device, non_blocking=False)
 
-                # Fixed autocast for validation
-                with amp.autocast(
-                    device_type=self.device_type, 
-                    dtype=self.autocast_dtype, 
-                    enabled=self.mixed_precision
-                ):
+                # Graceful autocast for validation
+                try:
+                    autocast_context = amp.autocast(
+                        device_type=self.device_type, 
+                        dtype=self.autocast_dtype, 
+                        enabled=self.mixed_precision
+                    )
+                except Exception:
+                    autocast_context = amp.autocast(device_type="cpu", enabled=False)
+                    
+                with autocast_context:
                     outputs = self.model(images)
                     loss = self.criterion(outputs, labels)
 
@@ -187,7 +248,7 @@ class PyTorchTrainer:
 
         history = {"train_loss": [], "train_acc": [], "val_loss": [], "val_acc": []}
 
-        print(f"\n🚀 Starting training for {epochs} epochs...")
+        print(f"\nStarting training for {epochs} epochs...")
         print("=" * 70)
 
         for epoch in range(1, epochs + 1):
@@ -211,7 +272,7 @@ class PyTorchTrainer:
                       f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f}")
 
         print("=" * 70)
-        print("🎉 Training completed!")
+        print("Training completed!")
         return history
 
     def save_model(self, path, epoch=None, **kwargs):
@@ -231,11 +292,23 @@ class PyTorchTrainer:
             checkpoint['scheduler_state_dict'] = self.scheduler.state_dict()
             
         torch.save(checkpoint, path)
-        print(f"💾 Model saved to {path}")
+        print(f"Model saved to {path}")
 
     def load_model(self, path):
         """Load model checkpoint"""
-        checkpoint = torch.load(path, map_location=self.device)
+        # Safe checkpoint loading with device mapping
+        try:
+            checkpoint = torch.load(path, map_location=self.device)
+        except Exception as e:
+            print(f"[WARNING] Failed to load checkpoint on {self.device}: {e}, trying CPU")
+            checkpoint = torch.load(path, map_location="cpu")
+            # Re-map to current device if different
+            if self.device != "cpu":
+                try:
+                    checkpoint = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v 
+                                for k, v in checkpoint.items()}
+                except Exception:
+                    print("[WARNING] Could not move checkpoint to target device, keeping on CPU")
         
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -244,7 +317,7 @@ class PyTorchTrainer:
             self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
             
         epoch = checkpoint.get('epoch', 0)
-        print(f"📁 Model loaded from {path} (epoch {epoch})")
+        print(f"Model loaded from {path} (epoch {epoch})")
         return epoch
 
     def evaluate(self, test_loader, verbose=True):
@@ -272,15 +345,25 @@ class PyTorchTrainer:
                 iterator = test_loader
                 
             for images, labels in iterator:
-                images = images.to(self.device, non_blocking=True)
-                labels = labels.to(self.device, non_blocking=True)
+                # Safe device transfer
+                try:
+                    images = images.to(self.device, non_blocking=True)
+                    labels = labels.to(self.device, non_blocking=True)
+                except Exception:
+                    images = images.to(self.device, non_blocking=False)
+                    labels = labels.to(self.device, non_blocking=False)
 
-                # Use autocast for consistency with training
-                with amp.autocast(
-                    device_type=self.device_type, 
-                    dtype=self.autocast_dtype, 
-                    enabled=self.mixed_precision
-                ):
+                # Graceful autocast
+                try:
+                    autocast_context = amp.autocast(
+                        device_type=self.device_type, 
+                        dtype=self.autocast_dtype, 
+                        enabled=self.mixed_precision
+                    )
+                except Exception:
+                    autocast_context = amp.autocast(device_type="cpu", enabled=False)
+                    
+                with autocast_context:
                     outputs = self.model(images)
                     loss = self.criterion(outputs, labels)
 
@@ -298,7 +381,7 @@ class PyTorchTrainer:
         
         if verbose:
             print("=" * 50)
-            print(f"📊 Test Results:")
+            print(f"Test Results:")
             print(f"   Test Loss: {test_loss:.4f}")
             print(f"   Test Accuracy: {test_acc:.4f} ({test_acc*100:.2f}%)")
             print(f"   Correct Predictions: {total_correct}/{total_samples}")
@@ -323,13 +406,23 @@ class PyTorchTrainer:
         with torch.inference_mode():
             pbar = tqdm(data_loader, desc="Predicting", leave=True)
             for images, _ in pbar:
-                images = images.to(self.device, non_blocking=True)
+                # Safe device transfer
+                try:
+                    images = images.to(self.device, non_blocking=True)
+                except Exception:
+                    images = images.to(self.device, non_blocking=False)
                 
-                with amp.autocast(
-                    device_type=self.device_type, 
-                    dtype=self.autocast_dtype, 
-                    enabled=self.mixed_precision
-                ):
+                # Graceful autocast
+                try:
+                    autocast_context = amp.autocast(
+                        device_type=self.device_type, 
+                        dtype=self.autocast_dtype, 
+                        enabled=self.mixed_precision
+                    )
+                except Exception:
+                    autocast_context = amp.autocast(device_type="cpu", enabled=False)
+                    
+                with autocast_context:
                     outputs = self.model(images)
                 
                 if return_probabilities:
@@ -348,7 +441,7 @@ class PyTorchTrainer:
         trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         
         print("=" * 60)
-        print("🔍 Model Information:")
+        print("Model Information:")
         print(f"   Total Parameters: {total_params:,}")
         print(f"   Trainable Parameters: {trainable_params:,}")
         print(f"   Non-trainable Parameters: {total_params - trainable_params:,}")

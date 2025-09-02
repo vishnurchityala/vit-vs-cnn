@@ -31,8 +31,8 @@ def resize_positional_embedding(old_emb, new_size, hidden_dim):
 
 class CustomViTClassifier(nn.Module):
     """
-    Unified ViT classifier with flexible output head and positional embedding resizing.
-    Uses torchvision.models VisionTransformer backbone.
+    Unified ViT classifier with graceful device handling.
+    Platform-agnostic for Mac development and Windows server training.
     """
     def __init__(
         self,
@@ -44,14 +44,8 @@ class CustomViTClassifier(nn.Module):
         device=None
     ):
         super().__init__()
-        # Force CPU for Vision Transformer to avoid MPS dtype issues
-        if device is None:
-            if torch.cuda.is_available():
-                self.device = "cuda"
-            else:
-                self.device = "cpu"  # Use CPU instead of MPS for ViT compatibility
-        else:
-            self.device = device
+        # Graceful device detection and validation
+        self.device = self._detect_and_validate_device(device)
         self.model_name = model_name
         self.img_size = img_size
 
@@ -89,12 +83,61 @@ class CustomViTClassifier(nn.Module):
         # Custom classifier
         self.classifier = nn.Linear(hidden_dim, num_classes)
         
-        # Ensure model is on correct device and dtype
-        self.model = self.model.to(self.device, dtype=torch.float32)
-        self.classifier = self.classifier.to(self.device, dtype=torch.float32)
+        # Safely move model to device with error handling
+        try:
+            self.model = self.model.to(self.device, dtype=torch.float32)
+            self.classifier = self.classifier.to(self.device, dtype=torch.float32)
+            print(f"[INFO] ViT model loaded on {self.device}")
+        except Exception as e:
+            print(f"[WARNING] Failed to move ViT to {self.device}: {e}, falling back to CPU")
+            self.device = "cpu"
+            self.model = self.model.to(self.device, dtype=torch.float32)
+            self.classifier = self.classifier.to(self.device, dtype=torch.float32)
+
+    def _detect_and_validate_device(self, device=None):
+        """Gracefully detect and validate device for ViT"""
+        if device is not None:
+            if device.startswith("cuda"):
+                if not torch.cuda.is_available():
+                    print(f"[WARNING] CUDA requested but not available for ViT, using CPU")
+                    return "cpu"
+                try:
+                    # Test CUDA functionality
+                    test_tensor = torch.tensor([1.0]).to(device)
+                    return device
+                except Exception as e:
+                    print(f"[WARNING] CUDA device {device} not accessible for ViT: {e}, using CPU")
+                    return "cpu"
+            return device
+            
+        # Auto-detect: prefer CUDA if available and working
+        if torch.cuda.is_available():
+            try:
+                # Test CUDA functionality
+                test_tensor = torch.tensor([1.0]).cuda()
+                return "cuda"
+            except Exception as e:
+                print(f"[WARNING] CUDA available but not functional for ViT: {e}, using CPU")
+                return "cpu"
+        else:
+            return "cpu"
 
     def forward(self, x):
-        # Ensure consistent dtype and device
-        x = x.to(self.device, dtype=torch.float32)
-        features = self.model(x)
-        return self.classifier(features)
+        # Safe device and dtype handling
+        try:
+            x = x.to(self.device, dtype=torch.float32)
+            features = self.model(x)
+            return self.classifier(features)
+        except Exception as e:
+            print(f"[ERROR] Forward pass failed: {e}")
+            # Try CPU fallback if not already on CPU
+            if self.device != "cpu":
+                print("[INFO] Attempting CPU fallback for ViT forward pass")
+                x = x.to("cpu", dtype=torch.float32)
+                self.model = self.model.to("cpu")
+                self.classifier = self.classifier.to("cpu")
+                self.device = "cpu"
+                features = self.model(x)
+                return self.classifier(features)
+            else:
+                raise e
