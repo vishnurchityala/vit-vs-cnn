@@ -22,7 +22,7 @@ class ResNetMLP(nn.Module):
                  num_classes, 
                  pretrained=True, 
                  mlp_hidden=[1024, 512], 
-                 dropout=0.2, 
+                 dropout=0.5, 
                  freeze_backbone=False,
                  device=None):
         super().__init__()

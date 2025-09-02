@@ -1,6 +1,6 @@
 import torch
 from src.model import ResNetMLP
-from src.train import PyTorchTrainer
+from src.train import PyTorchTrainerCuda
 from src.data_loaders import dtd_test_loader, dtd_train_loader, dtd_val_loader, dtd_num_classes
 
 
@@ -25,17 +25,11 @@ def main():
     
     # Create CNN model
     print("\nCreating the CNN Model...")
-    cnn_model = ResNetMLP(
-        num_classes=num_classes,
-        pretrained=True,
-        freeze_backbone=False,
-        mlp_hidden=[512],  # Add one hidden layer
-        dropout=0.3
-    )
+    cnn_model = ResNetMLP(num_classes=num_classes)
     
     # Create CNN trainer
     print("\nCreating the CNN Trainer...")
-    cnn_trainer = PyTorchTrainer(
+    cnn_trainer = PyTorchTrainerCuda(
         model=cnn_model,
         train_loader=train_loader,
         val_loader=val_loader,
