@@ -11,6 +11,7 @@ transform = transforms.Compose([
 
 batch_size = 64
 val_split = 0.1
+mnist_num_classes = 10
 
 full_train_dataset = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
 test_dataset = datasets.MNIST(root='./data', train=False, download=True, transform=transform)

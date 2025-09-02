@@ -11,6 +11,8 @@ transform = transforms.Compose([
 
 batch_size = 64
 val_split = 0.1
+cifar_num_classes = 10
+
 
 full_train_dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
 test_dataset = datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
