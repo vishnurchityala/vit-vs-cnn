@@ -1,5 +1,5 @@
 import torch
-from src.model import ResNetMLP
+from src.model import ResNetMLP,EfficientNetMLP
 from src.train import PyTorchTrainerCuda
 from src.data_loaders import dtd_test_loader, dtd_train_loader, dtd_val_loader, dtd_num_classes
 
@@ -25,7 +25,11 @@ def main():
     
     # Create CNN model
     print("\nCreating the CNN Model...")
-    cnn_model = ResNetMLP(num_classes=num_classes)
+    cnn_model = EfficientNetMLP(
+        num_classes=num_classes,
+        pretrained=True,
+        freeze_backbone=False
+    )
     
     # Create CNN trainer
     print("\nCreating the CNN Trainer...")

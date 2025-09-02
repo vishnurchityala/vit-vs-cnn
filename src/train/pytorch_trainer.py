@@ -162,21 +162,22 @@ class PyTorchTrainer:
         
         return total_loss / len(self.val_loader), 100.0 * correct / total
     
-    def fit(self, epochs=10):
-        """Train the model for specified number of epochs."""
+    def fit(self, epochs=10, early_stopping_patience=None, early_stopping_min_delta=0.0):
+        """Train the model for specified number of epochs with optional Early Stopping."""
         if self.train_loader is None:
             raise ValueError("train_loader must be provided for training")
         
         history = {
-            "train_loss": [],
-            "train_acc": [],
-            "val_loss": [],
-            "val_acc": []
+            "train_loss": [], "train_acc": [],
+            "val_loss": [], "val_acc": []
         }
         
         print(f"\nStarting training for {epochs} epochs...")
         print("=" * 70)
-        
+
+        best_val_loss = float('inf')
+        patience_counter = 0
+
         for epoch in range(1, epochs + 1):
             # Training
             train_loss, train_acc = self.train_one_epoch(epoch)
@@ -192,15 +193,28 @@ class PyTorchTrainer:
             # Print epoch results
             if val_loss is not None:
                 print(f"Epoch [{epoch:3d}/{epochs}] "
-                      f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}% "
-                      f"| Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2f}%")
+                    f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}% "
+                    f"| Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2f}%")
+                
+                # Early Stopping logic
+                if early_stopping_patience is not None:
+                    if val_loss < best_val_loss - early_stopping_min_delta:
+                        best_val_loss = val_loss
+                        patience_counter = 0  # reset counter
+                    else:
+                        patience_counter += 1
+                        print(f"[INFO] No improvement in val_loss for {patience_counter} epoch(s)")
+                        if patience_counter >= early_stopping_patience:
+                            print(f"[INFO] Early stopping triggered at epoch {epoch}")
+                            break
             else:
                 print(f"Epoch [{epoch:3d}/{epochs}] "
-                      f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%")
+                    f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%")
         
         print("=" * 70)
         print("Training completed!")
         return history
+
     
     def evaluate(self, test_loader, verbose=True):
         """Evaluate the model on test dataset."""
