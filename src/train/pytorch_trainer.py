@@ -2,8 +2,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.cuda.amp import autocast, GradScaler
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm
 import numpy as np
+import copy
 
 
 def get_device():
@@ -14,10 +16,38 @@ def get_device():
         return torch.device("cpu")
 
 
+class EarlyStopping:
+    """Early stopping utility class."""
+    
+    def __init__(self, patience=10, min_delta=0.001, restore_best_weights=True):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.restore_best_weights = restore_best_weights
+        self.best_loss = float('inf')
+        self.counter = 0
+        self.best_weights = None
+        
+    def __call__(self, val_loss, model):
+        """Returns True if training should be stopped, False otherwise."""
+        if val_loss < self.best_loss - self.min_delta:
+            self.best_loss = val_loss
+            self.counter = 0
+            if self.restore_best_weights:
+                self.best_weights = copy.deepcopy(model.state_dict())
+            return False
+        else:
+            self.counter += 1
+            if self.counter >= self.patience:
+                if self.restore_best_weights and self.best_weights is not None:
+                    model.load_state_dict(self.best_weights)
+                return True
+            return False
+
+
 class PyTorchTrainer:
     """
-    Clean PyTorch trainer with proper device handling.
-    Works on Mac (development) and Windows server (training).
+    PyTorch trainer with early stopping and learning rate scheduling.
+    Latest version for development testing.
     """
     
     def __init__(self, 
@@ -30,7 +60,11 @@ class PyTorchTrainer:
                  device=None,
                  use_amp=False,
                  lr=3e-4,
-                 weight_decay=0.05):
+                 weight_decay=0.05,
+                 early_stopping_patience=15,
+                 early_stopping_min_delta=0.001,
+                 lr_scheduler_patience=7,
+                 lr_scheduler_factor=0.5):
         
         # Device handling
         self.device = device if device is not None else get_device()
@@ -55,7 +89,27 @@ class PyTorchTrainer:
         self.optimizer = optimizer or optim.Adam(
             self.model.parameters(), lr=lr, weight_decay=weight_decay
         )
-        self.scheduler = scheduler
+        
+        # Learning rate scheduler setup
+        if scheduler is None:
+            self.scheduler = ReduceLROnPlateau(
+                self.optimizer,
+                mode='min',
+                factor=lr_scheduler_factor,
+                patience=lr_scheduler_patience,
+                min_lr=1e-8
+            )
+            print(f"[INFO] Using ReduceLROnPlateau scheduler (patience={lr_scheduler_patience}, factor={lr_scheduler_factor})")
+        else:
+            self.scheduler = scheduler
+        
+        # Early stopping setup
+        self.early_stopping = EarlyStopping(
+            patience=early_stopping_patience,
+            min_delta=early_stopping_min_delta,
+            restore_best_weights=True
+        )
+        print(f"[INFO] Early stopping enabled (patience={early_stopping_patience}, min_delta={early_stopping_min_delta})")
         
         # Mixed precision setup
         self.use_amp = use_amp and self.device.type == "cuda"
@@ -86,6 +140,7 @@ class PyTorchTrainer:
             self.optimizer.zero_grad()
             
             # Forward pass with optional mixed precision
+            # DIFFERENCE: Latest autocast with device_type parameter
             if self.use_amp:
                 with autocast(device_type="cuda"):
                     output = self.model(data)
@@ -100,10 +155,6 @@ class PyTorchTrainer:
                 loss = self.criterion(output, target)
                 loss.backward()
                 self.optimizer.step()
-            
-            # Update scheduler if provided
-            if self.scheduler:
-                self.scheduler.step()
             
             # Calculate metrics
             total_loss += loss.item()
@@ -138,6 +189,7 @@ class PyTorchTrainer:
                 data, target = data.to(self.device), target.to(self.device)
                 
                 # Forward pass
+                # DIFFERENCE: Latest autocast with device_type parameter
                 if self.use_amp:
                     with autocast(device_type="cuda"):
                         output = self.model(data)
@@ -162,23 +214,27 @@ class PyTorchTrainer:
         
         return total_loss / len(self.val_loader), 100.0 * correct / total
     
-    def fit(self, epochs=10, early_stopping_patience=None, early_stopping_min_delta=0.0):
-        """Train the model for specified number of epochs with optional Early Stopping."""
+    def fit(self, epochs=100):
+        """Train the model with early stopping and learning rate scheduling."""
         if self.train_loader is None:
             raise ValueError("train_loader must be provided for training")
         
         history = {
-            "train_loss": [], "train_acc": [],
-            "val_loss": [], "val_acc": []
+            "train_loss": [],
+            "train_acc": [],
+            "val_loss": [],
+            "val_acc": [],
+            "lr": []
         }
         
-        print(f"\nStarting training for {epochs} epochs...")
-        print("=" * 70)
-
-        best_val_loss = float('inf')
-        patience_counter = 0
-
+        print(f"\nStarting training for up to {epochs} epochs...")
+        print("=" * 80)
+        
         for epoch in range(1, epochs + 1):
+            # Get current learning rate
+            current_lr = self.optimizer.param_groups[0]['lr']
+            history["lr"].append(current_lr)
+            
             # Training
             train_loss, train_acc = self.train_one_epoch(epoch)
             history["train_loss"].append(train_loss)
@@ -193,28 +249,37 @@ class PyTorchTrainer:
             # Print epoch results
             if val_loss is not None:
                 print(f"Epoch [{epoch:3d}/{epochs}] "
-                    f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}% "
-                    f"| Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2f}%")
-                
-                # Early Stopping logic
-                if early_stopping_patience is not None:
-                    if val_loss < best_val_loss - early_stopping_min_delta:
-                        best_val_loss = val_loss
-                        patience_counter = 0  # reset counter
-                    else:
-                        patience_counter += 1
-                        print(f"[INFO] No improvement in val_loss for {patience_counter} epoch(s)")
-                        if patience_counter >= early_stopping_patience:
-                            print(f"[INFO] Early stopping triggered at epoch {epoch}")
-                            break
+                      f"LR: {current_lr:.2e} | "
+                      f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}% "
+                      f"| Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.2f}%")
             else:
                 print(f"Epoch [{epoch:3d}/{epochs}] "
-                    f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%")
+                      f"LR: {current_lr:.2e} | "
+                      f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%")
+            
+            # Update learning rate scheduler
+            if self.scheduler and val_loss is not None:
+                if isinstance(self.scheduler, ReduceLROnPlateau):
+                    self.scheduler.step(val_loss)
+                else:
+                    self.scheduler.step()
+            
+            # Check early stopping
+            if val_loss is not None:
+                if self.early_stopping(val_loss, self.model):
+                    print(f"\n[INFO] Early stopping triggered at epoch {epoch}")
+                    print(f"[INFO] Best validation loss: {self.early_stopping.best_loss:.4f}")
+                    print("[INFO] Restored best model weights")
+                    break
+                elif self.early_stopping.counter > 0:
+                    print(f"[INFO] Early stopping: {self.early_stopping.counter}/{self.early_stopping.patience}")
         
-        print("=" * 70)
+        print("=" * 80)
         print("Training completed!")
+        if val_loss is not None:
+            print(f"Best validation loss achieved: {self.early_stopping.best_loss:.4f}")
+        
         return history
-
     
     def evaluate(self, test_loader, verbose=True):
         """Evaluate the model on test dataset."""
@@ -237,6 +302,7 @@ class PyTorchTrainer:
                 data, target = data.to(self.device), target.to(self.device)
                 
                 # Forward pass
+                # DIFFERENCE: Latest autocast with device_type parameter
                 if self.use_amp:
                     with autocast(device_type="cuda"):
                         output = self.model(data)
@@ -282,6 +348,7 @@ class PyTorchTrainer:
             for data, _ in pbar:
                 data = data.to(self.device)
                 
+                # DIFFERENCE: Latest autocast with device_type parameter
                 if self.use_amp:
                     with autocast(device_type="cuda"):
                         output = self.model(data)
@@ -302,16 +369,15 @@ class PyTorchTrainer:
         checkpoint = {
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
             'device': str(self.device),
             'use_amp': self.use_amp,
+            'best_val_loss': self.early_stopping.best_loss,
             **kwargs
         }
         
         if epoch is not None:
             checkpoint['epoch'] = epoch
-        
-        if self.scheduler:
-            checkpoint['scheduler_state_dict'] = self.scheduler.state_dict()
         
         torch.save(checkpoint, path)
         print(f"Model saved to {path}")
@@ -323,7 +389,7 @@ class PyTorchTrainer:
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         
-        if self.scheduler and 'scheduler_state_dict' in checkpoint:
+        if self.scheduler and checkpoint.get('scheduler_state_dict'):
             self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         
         epoch = checkpoint.get('epoch', 0)
