@@ -19,19 +19,22 @@ def get_device():
 class EarlyStopping:
     """Early stopping utility class."""
     
-    def __init__(self, patience=10, min_delta=0.001, restore_best_weights=True):
+    def __init__(self, patience=10, min_delta=0.01, restore_best_weights=True):
         self.patience = patience
         self.min_delta = min_delta
         self.restore_best_weights = restore_best_weights
         self.best_loss = float('inf')
         self.counter = 0
         self.best_weights = None
+        self.best_epoch = 0
         
-    def __call__(self, val_loss, model):
+    def __call__(self, val_loss, model, epoch=None):
         """Returns True if training should be stopped, False otherwise."""
+        # Check if this is a significant improvement
         if val_loss < self.best_loss - self.min_delta:
             self.best_loss = val_loss
             self.counter = 0
+            self.best_epoch = epoch if epoch is not None else self.best_epoch
             if self.restore_best_weights:
                 self.best_weights = copy.deepcopy(model.state_dict())
             return False
@@ -62,7 +65,7 @@ class PyTorchTrainer:
                  lr=3e-4,
                  weight_decay=0.05,
                  early_stopping_patience=15,
-                 early_stopping_min_delta=0.001,
+                 early_stopping_min_delta=0.01,
                  lr_scheduler_patience=7,
                  lr_scheduler_factor=0.5):
         
@@ -266,13 +269,16 @@ class PyTorchTrainer:
             
             # Check early stopping
             if val_loss is not None:
-                if self.early_stopping(val_loss, self.model):
+                if self.early_stopping(val_loss, self.model, epoch):
                     print(f"\n[INFO] Early stopping triggered at epoch {epoch}")
-                    print(f"[INFO] Best validation loss: {self.early_stopping.best_loss:.4f}")
+                    print(f"[INFO] Best validation loss: {self.early_stopping.best_loss:.4f} (epoch {self.early_stopping.best_epoch})")
                     print("[INFO] Restored best model weights")
                     break
                 elif self.early_stopping.counter > 0:
                     print(f"[INFO] Early stopping: {self.early_stopping.counter}/{self.early_stopping.patience}")
+                else:
+                    # New best model found
+                    print(f"[INFO] New best validation loss: {val_loss:.4f}")
         
         print("=" * 80)
         print("Training completed!")
