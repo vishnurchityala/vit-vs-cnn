@@ -30,7 +30,8 @@ def main():
         model_name="vit_b_16",
         img_size=224,
         pretrained=True,
-        freeze_backbone=False
+        freeze_backbone=False,
+        unfreeze_layers=3
     )
     
     # Create ViT trainer
