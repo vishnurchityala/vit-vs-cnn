@@ -134,7 +134,7 @@ class EfficientNetMLP(nn.Module):
             {"params": self.backbone.parameters(), "lr": 1e-5},
             {"params": self.classifier.parameters(), "lr": 1e-4}
         ], weight_decay=1e-4)
-        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3, verbose=True)
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=3)
 
     def forward(self, x):
         x = x.to(self.device)
