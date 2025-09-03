@@ -23,26 +23,29 @@ def main():
     print(f"Val batches: {len(val_loader)}")
     print(f"Test batches: {len(test_loader)}")
     
-    # Create ViT model
+    # Create ViT model with improved regularization
     print("\nCreating the ViT Model...")
     vit_model = CustomViTClassifier(
         num_classes=num_classes,
         model_name="vit_b_16",
         img_size=224,
         pretrained=True,
-        freeze_backbone=False,
-        unfreeze_layers=3
+        freeze_backbone=True,      # Changed to True for better regularization
+        unfreeze_layers=1          # Reduced from 3 to 1
     )
     
-    # Create ViT trainer
+    # Create ViT trainer with improved regularization settings
     print("\nCreating the ViT Trainer...")
     vit_trainer = PyTorchTrainer(
         model=vit_model,
         train_loader=train_loader,
         val_loader=val_loader,
         use_amp=True,  # Enable mixed precision if CUDA available
-        lr=1e-4,
-        weight_decay=0.01
+        lr=5e-5,                        # Reduced from 1e-4 for better stability
+        weight_decay=0.05,              # Increased from 0.01 for more regularization
+        early_stopping_patience=10,     # Reduced from 15 for faster stopping
+        early_stopping_min_delta=0.02,  # More strict improvement threshold
+        lr_scheduler_patience=5         # Reduced from 7 for faster LR decay
     )
     
     # Print model information
@@ -55,7 +58,7 @@ def main():
     print("\n" + "="*60)
     print("TRAINING VIT MODEL")
     print("="*60)
-    vit_history = vit_trainer.fit(epochs=5)
+    vit_history = vit_trainer.fit(epochs=30)  # Reduced from 50 to prevent overfitting
     
     # Evaluate ViT model
     print("\n" + "="*60)

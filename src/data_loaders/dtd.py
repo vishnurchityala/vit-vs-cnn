@@ -5,20 +5,22 @@ from torch.utils.data import DataLoader
 
 train_transform = transforms.Compose([
     transforms.Resize((256, 256)),                 # Slightly larger for random crop
-    transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),  # Random crop with scale
+    transforms.RandomResizedCrop(224, scale=(0.6, 1.0)),  # More aggressive cropping
     transforms.RandomHorizontalFlip(p=0.5),       # Horizontal flip
-    transforms.RandomRotation(15),                # Random rotation ±15 degrees
+    transforms.RandomVerticalFlip(p=0.3),         # Add vertical flip for textures
+    transforms.RandomRotation(30),                # Increased rotation from 15 to 30
     transforms.ColorJitter(
-        brightness=0.3,
-        contrast=0.3,
-        saturation=0.3,
-        hue=0.1
+        brightness=0.4,                           # Increased from 0.3
+        contrast=0.4,                             # Increased from 0.3
+        saturation=0.4,                           # Increased from 0.3
+        hue=0.15                                  # Increased from 0.1
     ),                                            # Color jitter
-    transforms.RandomPerspective(distortion_scale=0.2, p=0.5),  # Perspective transform
+    transforms.RandomPerspective(distortion_scale=0.3, p=0.5),  # Increased distortion
+    transforms.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.9, 1.1)),  # Add affine transform
     transforms.ToTensor(),                        # Convert to tensor FIRST
     transforms.Normalize(mean=[0.485, 0.456, 0.406],           # ImageNet normalization
                          std=[0.229, 0.224, 0.225]),
-    transforms.RandomErasing(p=0.3, scale=(0.02, 0.2)),        # Random erasing AFTER tensor
+    transforms.RandomErasing(p=0.5, scale=(0.02, 0.3)),        # Increased probability and scale
 ])
 
 
@@ -33,7 +35,7 @@ val_transform = transforms.Compose([
 
 
 # Simple configuration
-batch_size = 64
+batch_size = 32  # Reduced from 64 for better regularization
 dtd_num_classes = 47
 
 # Load datasets

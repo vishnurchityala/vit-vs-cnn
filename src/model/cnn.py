@@ -12,36 +12,36 @@ class ResNetMLP(nn.Module):
     def __init__(self, 
                  num_classes, 
                  pretrained=True, 
-                 mlp_hidden=[512, 256], 
-                 dropout=0.5, 
+                 mlp_hidden=[256], 
+                 dropout=0.7, 
                  freeze_backbone=True, 
-                 unfreeze_layers=3,   # last N layers to unfreeze
-                 label_smoothing=0.1,
+                 unfreeze_layers=1,
+                 label_smoothing=0.2,
                  device=None):
         super().__init__()
         self.device = device if device is not None else get_device()
         self.label_smoothing = label_smoothing
 
-        # Load ResNet50 backbone
+
         weights = ResNet50_Weights.DEFAULT if pretrained else None
         resnet = models.resnet50(weights=weights)
 
         backbone_out = resnet.fc.in_features
-        self.backbone = nn.Sequential(*list(resnet.children())[:-1])  # remove fc
+        self.backbone = nn.Sequential(*list(resnet.children())[:-1])
 
-        # Freeze backbone
+
         if freeze_backbone:
             for param in self.backbone.parameters():
                 param.requires_grad = False
 
-            # Unfreeze last N layers dynamically
+
             resnet_layers = list(self.backbone.children())
             if unfreeze_layers > 0:
                 for layer in resnet_layers[-unfreeze_layers:]:
                     for param in layer.parameters():
                         param.requires_grad = True
 
-        # Build MLP head
+
         layers = []
         input_dim = backbone_out
         if mlp_hidden is None:
@@ -58,7 +58,7 @@ class ResNetMLP(nn.Module):
 
         self.to(self.device)
 
-        # Optimizer and scheduler
+
         self.optimizer = optim.AdamW([
             {"params": self.backbone.parameters(), "lr": 1e-5},
             {"params": self.classifier.parameters(), "lr": 1e-4}
@@ -75,6 +75,23 @@ class ResNetMLP(nn.Module):
     def step_scheduler(self, val_loss):
         self.scheduler.step(val_loss)
 
+    def compute_loss(self, outputs, labels):
+
+        if self.label_smoothing > 0:
+            n_classes = outputs.size(1)
+            smooth_labels = torch.full_like(outputs, self.label_smoothing / (n_classes - 1))
+            smooth_labels.scatter_(1, labels.unsqueeze(1), 1 - self.label_smoothing)
+            log_probs = F.log_softmax(outputs, dim=1)
+            loss = -(smooth_labels * log_probs).sum(dim=1).mean()
+        else:
+            loss = F.cross_entropy(outputs, labels)
+        
+
+        confidence_penalty = 0.1 * (outputs.max(dim=1)[0]).mean()
+        loss += confidence_penalty
+        
+        return loss
+
     def get_device(self):
         return self.device
 
@@ -83,11 +100,11 @@ class EfficientNetMLP(nn.Module):
     def __init__(self,
                  num_classes,
                  pretrained=True,
-                 mlp_hidden=[512, 256],
-                 dropout=0.5,
+                 mlp_hidden=[256],
+                 dropout=0.7,
                  freeze_backbone=True,
-                 unfreeze_layers=0,  # last N blocks to unfreeze
-                 label_smoothing=0.1,
+                 unfreeze_layers=0,  # Keep frozen for better regularization
+                 label_smoothing=0.2,
                  device=None):
         super().__init__()
         self.device = device if device is not None else get_device()
@@ -99,20 +116,20 @@ class EfficientNetMLP(nn.Module):
         backbone_out = backbone.classifier[1].in_features
         self.backbone = nn.Sequential(*list(backbone.children())[:-1])
 
-        # Freeze backbone
+
         if freeze_backbone:
             for param in self.backbone.parameters():
                 param.requires_grad = False
 
-            # Unfreeze last N blocks
+
             if unfreeze_layers > 0:
-                # backbone.features contains all MBConv blocks
+
                 if hasattr(backbone, 'features'):
                     for block in self.backbone[-1].children()[-unfreeze_layers:]:
                         for param in block.parameters():
                             param.requires_grad = True
 
-        # Build MLP head
+
         layers = []
         input_dim = backbone_out
         if mlp_hidden is None:
@@ -129,7 +146,7 @@ class EfficientNetMLP(nn.Module):
 
         self.to(self.device)
 
-        # Optimizer and scheduler
+
         self.optimizer = optim.AdamW([
             {"params": self.backbone.parameters(), "lr": 1e-5},
             {"params": self.classifier.parameters(), "lr": 1e-4}
@@ -145,6 +162,23 @@ class EfficientNetMLP(nn.Module):
 
     def step_scheduler(self, val_loss):
         self.scheduler.step(val_loss)
+
+    def compute_loss(self, outputs, labels):
+
+        if self.label_smoothing > 0:
+            n_classes = outputs.size(1)
+            smooth_labels = torch.full_like(outputs, self.label_smoothing / (n_classes - 1))
+            smooth_labels.scatter_(1, labels.unsqueeze(1), 1 - self.label_smoothing)
+            log_probs = F.log_softmax(outputs, dim=1)
+            loss = -(smooth_labels * log_probs).sum(dim=1).mean()
+        else:
+            loss = F.cross_entropy(outputs, labels)
+        
+
+        confidence_penalty = 0.1 * (outputs.max(dim=1)[0]).mean()
+        loss += confidence_penalty
+        
+        return loss
 
     def get_device(self):
         return self.device

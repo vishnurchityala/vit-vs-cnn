@@ -17,7 +17,6 @@ def resize_positional_embedding(old_embedding, new_size, hidden_dim):
     patch_tokens = old_embedding[:, num_extra_tokens:, :]
     patch_tokens = patch_tokens.reshape(1, old_size, old_size, hidden_dim).permute(0, 3, 1, 2)
 
-
     new_patch_tokens = F.interpolate(
         patch_tokens,
         size=(new_size, new_size),
@@ -36,8 +35,8 @@ class CustomViTClassifier(nn.Module):
                  freeze_backbone=True,
                  unfreeze_layers=3,
                  img_size=224,
-                 dropout=0.3,
-                 label_smoothing=0.1,
+                 dropout=0.7,
+                 label_smoothing=0.2,
                  device=None):
         super().__init__()
         self.device = device if device is not None else get_device()
@@ -45,7 +44,6 @@ class CustomViTClassifier(nn.Module):
         self.model_name = model_name
         self.label_smoothing = label_smoothing
 
-        # Load pretrained ViT
         if model_name == "vit_b_16":
             weights = ViT_B_16_Weights.IMAGENET1K_V1 if pretrained else None
             self.backbone = models.vit_b_16(weights=weights)
@@ -59,7 +57,6 @@ class CustomViTClassifier(nn.Module):
         self.patch_size = self.backbone.patch_size
         num_patches = (img_size // self.patch_size) ** 2
 
-        # Resize positional embeddings if needed
         if pretrained and img_size != 224:
             self.backbone.encoder.pos_embedding = resize_positional_embedding(
                 self.backbone.encoder.pos_embedding.data,
@@ -71,7 +68,6 @@ class CustomViTClassifier(nn.Module):
                 torch.zeros(1, num_patches + 1, self.hidden_dim)
             )
 
-        # Freeze backbone and selectively unfreeze
         if freeze_backbone:
             for param in self.backbone.parameters():
                 param.requires_grad = False
@@ -81,17 +77,14 @@ class CustomViTClassifier(nn.Module):
                     for param in self.backbone.encoder.layers[i].parameters():
                         param.requires_grad = True
 
-        # Replace original head
         self.backbone.heads = nn.Identity()
         self.classifier = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(self.hidden_dim, num_classes)
         )
 
-        # Move model to device
         self.to(self.device)
 
-        # Optimizer and scheduler
         self.optimizer = optim.AdamW([
             {"params": self.backbone.parameters(), "lr": 1e-5},
             {"params": self.classifier.parameters(), "lr": 1e-4}
@@ -105,7 +98,6 @@ class CustomViTClassifier(nn.Module):
         return output
 
     def compute_loss(self, outputs, labels):
-        # Label smoothing cross-entropy
         if self.label_smoothing > 0:
             n_classes = outputs.size(1)
             smooth_labels = torch.full_like(outputs, self.label_smoothing / (n_classes - 1))
@@ -114,6 +106,10 @@ class CustomViTClassifier(nn.Module):
             loss = -(smooth_labels * log_probs).sum(dim=1).mean()
         else:
             loss = F.cross_entropy(outputs, labels)
+        
+        confidence_penalty = 0.1 * (outputs.max(dim=1)[0]).mean()
+        loss += confidence_penalty
+        
         return loss
 
     def step_scheduler(self, val_loss):
