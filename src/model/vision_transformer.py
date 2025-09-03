@@ -17,6 +17,7 @@ def resize_positional_embedding(old_embedding, new_size, hidden_dim):
     patch_tokens = old_embedding[:, num_extra_tokens:, :]
     patch_tokens = patch_tokens.reshape(1, old_size, old_size, hidden_dim).permute(0, 3, 1, 2)
 
+
     new_patch_tokens = F.interpolate(
         patch_tokens,
         size=(new_size, new_size),
