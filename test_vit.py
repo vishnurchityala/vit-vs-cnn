@@ -68,7 +68,7 @@ def main():
     
     # Save ViT model
     print("\nSaving the ViT Model...")
-    vit_trainer.save_model("vit_model.pth", epoch=5)
+    torch.save(vit_model.state_dict(),"convnext_model.pth")
     
     # Final results
     print("\n" + "="*60)

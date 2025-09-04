@@ -1,14 +1,14 @@
 import torch
-from src.model import ResNetMLP,EfficientNetMLP
+from src.model import ConvNeXtXXL_MLP
 from src.train import PyTorchTrainerCuda, PyTorchTrainer
 from src.data_loaders import dtd_test_loader, dtd_train_loader, dtd_val_loader, dtd_num_classes
 
 
 def main():
-    """Test and train the CNN (ResNet) model."""
+    """Test and train the CNN (ConvNeXtXXL) model."""
     
     print("=" * 60)
-    print("CNN MODEL TESTING")
+    print("CNN (ConvNeXtXXL) MODEL TESTING")
     print("=" * 60)
     
     # Load dataset
@@ -25,11 +25,10 @@ def main():
     
     # Create CNN model with improved regularization
     print("\nCreating the CNN Model...")
-    cnn_model = EfficientNetMLP(
+    cnn_model = ConvNeXtXXL_MLP(
         num_classes=num_classes,
         pretrained=True,
-        freeze_backbone=True,       # Changed to True for better regularization
-        unfreeze_layers=0           # Keep completely frozen
+        freeze_backbone=True
     )
     
     # Create CNN trainer with improved regularization settings

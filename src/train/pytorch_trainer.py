@@ -17,34 +17,73 @@ def get_device():
 
 
 class EarlyStopping:
-    """Early stopping utility class."""
+    """Early stopping utility class with improved overfitting detection."""
     
-    def __init__(self, patience=10, min_delta=0.01, restore_best_weights=True):
+    def __init__(self, patience=10, min_delta=0.01, restore_best_weights=True, min_improvement_epochs=3):
         self.patience = patience
         self.min_delta = min_delta
         self.restore_best_weights = restore_best_weights
+        self.min_improvement_epochs = min_improvement_epochs  # Minimum epochs between improvements
+        
         self.best_loss = float('inf')
         self.counter = 0
         self.best_weights = None
         self.best_epoch = 0
         
+        # Track recent loss history to detect plateaus and oscillations
+        self.loss_history = []
+        self.epochs_since_improvement = 0
+        self.total_epochs = 0
+        
     def __call__(self, val_loss, model, epoch=None):
         """Returns True if training should be stopped, False otherwise."""
+        self.total_epochs += 1
+        self.loss_history.append(val_loss)
+        
+        # Keep only recent history (last 10 epochs)
+        if len(self.loss_history) > 10:
+            self.loss_history.pop(0)
+        
         # Check if this is a significant improvement
-        if val_loss < self.best_loss - self.min_delta:
-            self.best_loss = val_loss
-            self.counter = 0
-            self.best_epoch = epoch if epoch is not None else self.best_epoch
-            if self.restore_best_weights:
-                self.best_weights = copy.deepcopy(model.state_dict())
-            return False
+        is_improvement = val_loss < self.best_loss - self.min_delta
+        
+        if is_improvement:
+            # Only reset counter if enough epochs have passed since last improvement
+            # This prevents rapid oscillations from resetting the counter too frequently
+            if self.epochs_since_improvement >= self.min_improvement_epochs or self.counter == 0:
+                self.best_loss = val_loss
+                self.counter = 0
+                self.epochs_since_improvement = 0
+                self.best_epoch = epoch if epoch is not None else self.best_epoch
+                if self.restore_best_weights:
+                    self.best_weights = copy.deepcopy(model.state_dict())
+                return False
+            else:
+                # Improvement too soon after last one - still increment counter but update best loss
+                self.best_loss = val_loss
+                self.best_epoch = epoch if epoch is not None else self.best_epoch
+                if self.restore_best_weights:
+                    self.best_weights = copy.deepcopy(model.state_dict())
+                self.counter += 1
+                self.epochs_since_improvement += 1
         else:
             self.counter += 1
-            if self.counter >= self.patience:
-                if self.restore_best_weights and self.best_weights is not None:
-                    model.load_state_dict(self.best_weights)
-                return True
-            return False
+            self.epochs_since_improvement += 1
+        
+        # Additional check for plateauing (loss not changing significantly)
+        if len(self.loss_history) >= 5:
+            recent_losses = self.loss_history[-5:]
+            loss_variance = np.var(recent_losses)
+            if loss_variance < (self.min_delta / 2) ** 2:  # Very low variance indicates plateau
+                self.counter += 1  # Penalize plateauing
+        
+        # Check if we should stop
+        if self.counter >= self.patience:
+            if self.restore_best_weights and self.best_weights is not None:
+                model.load_state_dict(self.best_weights)
+            return True
+        
+        return False
 
 
 class PyTorchTrainer:
