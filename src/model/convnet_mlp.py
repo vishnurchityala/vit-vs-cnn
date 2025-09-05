@@ -2,25 +2,20 @@ import torch
 import torch.nn as nn
 import timm
 
-
 class ConvNeXtXXL_MLP(nn.Module):
     def __init__(self, num_classes=47, pretrained=True, mlp_hidden=None, dropout=0.5, freeze_backbone=True):
         super().__init__()
 
-        # Default hidden layers if none provided
         if mlp_hidden is None:
-            mlp_hidden = [1024, 512]
+            mlp_hidden = [1024,512,256]
 
-        # Load pretrained ConvNeXt-XXL backbone
+        # pretrained ConvNeXt-XXL backbone
         self.backbone = timm.create_model("convnext_xxlarge", pretrained=pretrained)
 
-        # Extract feature dimension
         in_features = self.backbone.head.fc.in_features
 
-        # Remove default head
         self.backbone.head.fc = nn.Identity()
 
-        # Build custom MLP classifier
         layers = []
         input_dim = in_features
         for h in mlp_hidden:
@@ -33,7 +28,6 @@ class ConvNeXtXXL_MLP(nn.Module):
         layers.append(nn.Linear(input_dim, num_classes))
         self.classifier = nn.Sequential(*layers)
 
-        # Optionally freeze backbone
         if freeze_backbone:
             for param in self.backbone.stem.parameters():
                 param.requires_grad = False
