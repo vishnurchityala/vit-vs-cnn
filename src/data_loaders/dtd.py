@@ -17,6 +17,7 @@ train_transform = transforms.Compose([
     ),                                            # Color jitter
     transforms.RandomPerspective(distortion_scale=0.3, p=0.5),  # Increased distortion
     transforms.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.9, 1.1)),  # Add affine transform
+    transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)), # Added Gaussian blur
     transforms.ToTensor(),                        # Convert to tensor FIRST
     transforms.Normalize(mean=[0.485, 0.456, 0.406],           # ImageNet normalization
                          std=[0.229, 0.224, 0.225]),

@@ -28,7 +28,8 @@ def main():
     cnn_model = ConvNeXtXXL_MLP(
         num_classes=num_classes,
         pretrained=True,
-        freeze_backbone=True
+        freeze_backbone=True,
+        mlp_hidden=[1024, 512, 256]
     )
     
     # Create CNN trainer with improved regularization settings
@@ -38,8 +39,8 @@ def main():
         train_loader=train_loader,
         val_loader=val_loader,
         use_amp=True,  # Enable mixed precision if CUDA available
-        lr=5e-5,                        # Reduced from 1e-4 for better stability
-        weight_decay=0.05,              # Increased from 0.01 for more regularization
+        lr=3e-5,                        # Reduced from 1e-4 for better stability
+        weight_decay=0.03,              # Increased from 0.01 for more regularization
         early_stopping_patience=10,     # Reduced from 15 for faster stopping
         early_stopping_min_delta=0.02,  # More strict improvement threshold
         lr_scheduler_patience=5         # Reduced from 7 for faster LR decay
